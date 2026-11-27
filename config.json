@@ -1,0 +1,38 @@
+{
+  "city": "coimbatore",
+  "venue": {
+    "label": "Broadway Cinemas, Coimbatore",
+    "code": "",
+    "slug_hint": "broadway"
+  },
+  "alert_after_failed_runs": 6,
+  "stop_after": "20261221",
+  "watches": [
+    {
+      "film": "Avengers: Doomsday",
+      "language": "English",
+      "screens": [
+        "EPIQ"
+      ],
+      "dates": [
+        "20261221"
+      ],
+      "slug": "avengers-doomsday",
+      "event_code": "ET00526287",
+      "enabled": true
+    },
+    {
+      "film": "Dune: Part Three",
+      "language": "English",
+      "screens": [
+        "IMAX"
+      ],
+      "dates": [
+        "20261221"
+      ],
+      "slug": "dune-part-three",
+      "event_code": "",
+      "enabled": true
+    }
+  ]
+}
