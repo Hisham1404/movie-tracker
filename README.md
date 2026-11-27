@@ -1,6 +1,6 @@
 # BookMyShow booking notifier
 
-Checks BookMyShow every hour from GitHub Actions and alerts you by **email**, **Telegram** or **WhatsApp (Twilio)** the moment a cinema opens bookings for a film on a date you care about.
+Checks BookMyShow every 15 minutes from GitHub Actions and alerts you by **email**, **Telegram** or **WhatsApp (Twilio)** the moment a cinema opens bookings for a film on a date you care about.
 
 Set up for Broadway Cinemas, Coimbatore:
 
@@ -13,21 +13,38 @@ The detection idea (a cinema only gets a `/buytickets/<venue code>/<date>` link 
 
 ## The catch: BookMyShow blocks GitHub's servers
 
-BookMyShow only serves Indian, non-datacenter IPs. A plain request from a GitHub runner gets **HTTP 403**. The notifier needs one of these two secrets to actually read BookMyShow:
+BookMyShow only serves Indian, non-datacenter IPs. A plain request from a GitHub runner gets **HTTP 403**. So the notifier reads BookMyShow through scraping services that exit from an Indian IP. Add the secret for each service you have an account with; a service whose secret is missing is skipped.
 
-- `SCRAPERAPI_KEY`: a key from scraperapi.com. Requests go out through an Indian IP. The free plan gives 1,000 credits a month (5,000 in the first 7 days). This setup makes 2 requests per run (one per film), plus one to look up Dune until BookMyShow lists it, so 32 to 48 a day. A film that has opened is not checked again. Across 1 to 21 Dec that is about 670 to 1,000 requests, inside the free plan.
-- `PROXY_URL`: any http(s) proxy in India, as `http://user:pass@host:port`.
+| Secret | Service | Asks for an India IP with | Credits per request |
+|---|---|---|---|
+| `SCRAPERAPI_KEY` | [ScraperAPI](https://www.scraperapi.com/) | `country_code=in` | 1 |
+| `SCRAPEDO_TOKEN` | [Scrape.do](https://scrape.do/) | `geoCode=in` and `super=true` | 10 |
+| `SCRAPINGANT_KEY` | [ScrapingAnt](https://scrapingant.com/) | `proxy_country=IN` and `browser=false` | 1 |
 
-Without either, every run fails, and after 6 failed runs in a row you get one warning alert saying the notifier is blind.
+Every page the notifier fetches goes to the next service in turn (ScraperAPI, Scrape.do, ScrapingAnt, then ScraperAPI again, and so on). GitHub numbers its runs and the notifier uses that number to carry the turns on from run to run, so nothing has to be stored. If a service errors, is out of credits or returns a bot-check page, the page goes to the next service instead and the failed one is skipped for the rest of that run. `PROXY_URL` (any http(s) proxy in India, as `http://user:pass@host:port`) is tried last. A page that BookMyShow itself answers with 404 is reported as missing without asking another service.
+
+The run log says which service served each page and what it cost, for example `ScraperAPI ok in 6.2s, credits 1: /movies/...`. Keys are never printed.
+
+Check these against your plans. They come from each service's docs (27 Nov 2026):
+
+- **ScraperAPI** lists India (`in`) for the Business plan and above. Hobby and Startup get only US and EU, and the free plan is not listed, so on those plans ScraperAPI cannot give you an Indian IP; leave `SCRAPERAPI_KEY` unset to skip it. A site behind bot protection (Cloudflare, Akamai and similar) costs about 10 credits a request instead of 1; the cost in the log shows what a BookMyShow request really costs.
+- **Scrape.do** has India only in its residential country list, so the request needs `super=true`, which is 10 credits instead of 1. Its free plan has 1,000 credits a month, about 100 requests.
+- **ScrapingAnt** loads a full browser unless told not to (`browser` defaults to true, 10 credits), so the notifier sends `browser=false`. Its free plan has 10,000 credits a month and allows one request at a time.
+
+Without any of these, every run fails, and after 6 failed runs in a row you get one warning alert saying the notifier is blind.
+
+### How many credits this uses
+
+The notifier runs 64 times a day (every 15 minutes from 02:00 to 17:45 UTC) and makes 2 requests a run, one per film (for Dune, the film-list lookup until BookMyShow lists it). That is about **128 requests a day**, a third of them on each service, so about 43 each. A film that has opened is not checked again. At the prices above that is roughly 43 credits a day on ScraperAPI, 430 on Scrape.do and 43 on ScrapingAnt, so the free plans last about 23 days, 2 days and 7 months. When a service runs out, its turns go to the next one.
 
 ## Set it up
 
 1. **Make the repo.** On GitHub, create a new **private** repository (for example `bms-notifier`) and upload every file in this folder, keeping the `.github/workflows/watch.yml` path.
-2. **Add secrets.** Repo → Settings → Secrets and variables → Actions → New repository secret. Add the ones for the channels you want (table below).
+2. **Add secrets.** Repo → Settings → Secrets and variables → Actions → New repository secret. Add the ones for the channels you want and for the scraping services you use (table below).
 3. **Test the alerts.** Actions tab → `bookmyshow-watch` → Run workflow → tick *Only send a test alert* → Run. You should get a test message on each channel you set up.
-4. **Test BookMyShow.** Run the workflow again without the tick. Open the run log: `open=False` means it read BookMyShow and the date isn't open yet (good). `could not read BookMyShow: HTTP 403` means it is blocked (add `SCRAPERAPI_KEY` or `PROXY_URL`).
+4. **Test BookMyShow.** Run the workflow again without the tick. Open the run log: `open=False` means it read BookMyShow and the date isn't open yet (good), and the `[fetch]` line above it says which service did the reading. `could not read BookMyShow:` followed by what each service answered, such as `ScraperAPI: HTTP 403 (out of credits)`, means none of them got through, so check the keys and credits. With no scraping service or proxy set it is just `HTTP 403`: BookMyShow is blocking the runner.
 
-After that it runs by itself every hour from 07:47 to 22:47 IST, and stops checking after 21 Dec 2026 (`stop_after` in `config.json`). Disable the workflow in the Actions tab when you're done.
+After that it runs by itself every 15 minutes from 07:30 to 23:15 IST, and stops checking after 21 Dec 2026 (`stop_after` in `config.json`). Disable the workflow in the Actions tab when you're done.
 
 ## Secrets
 
@@ -42,10 +59,12 @@ After that it runs by itself every hour from 07:47 to 22:47 IST, and stops check
 | `TWILIO_AUTH_TOKEN` | WhatsApp | From the Twilio console |
 | `TWILIO_WHATSAPP_FROM` | WhatsApp | The Twilio WhatsApp sender, e.g. `whatsapp:+14155238886` for the sandbox |
 | `TWILIO_WHATSAPP_TO` | WhatsApp | Your number, e.g. `whatsapp:+91XXXXXXXXXX` |
-| `SCRAPERAPI_KEY` | Reading BookMyShow | See "The catch" above |
-| `PROXY_URL` | Reading BookMyShow | Alternative to `SCRAPERAPI_KEY` |
+| `SCRAPERAPI_KEY` | Reading BookMyShow | Your ScraperAPI key. See "The catch" above |
+| `SCRAPEDO_TOKEN` | Reading BookMyShow | Your Scrape.do token |
+| `SCRAPINGANT_KEY` | Reading BookMyShow | Your ScrapingAnt API key |
+| `PROXY_URL` | Reading BookMyShow (last fallback) | An http(s) proxy in India, as `http://user:pass@host:port` |
 
-Use any one channel or all of them. A broken channel doesn't stop the others.
+Use any one channel or all of them. A broken channel doesn't stop the others. The same goes for the three scraping services: use one, two or all three.
 
 ### About WhatsApp through Twilio
 
@@ -62,13 +81,13 @@ A proper WhatsApp sender needs a Meta-verified WhatsApp Business profile and an 
 Everything is in `config.json`:
 
 - `venue.code`: Broadway's BookMyShow venue code. Leave empty to match any cinema whose link contains `slug_hint` (`broadway`). Once you see Broadway on BookMyShow, its link looks like `/cinemas/coimbatore/<name>/buytickets/<CODE>/<date>`; put `<CODE>` here to be exact. The run log also prints it when Broadway opens.
-- `watches[].dates`: add more days like `20261222` (each extra date is one more BookMyShow request per run, so watch the free-plan budget).
+- `watches[].dates`: add more days like `20261222` (each extra date is one more BookMyShow request per run, so watch the credit budget).
 - `watches[].slug` and `watches[].event_code`: the film's part of the BookMyShow link, `/movies/<city>/<slug>/<event code>`. Avengers uses `ET00526287`, taken from another public setup, so check it against the real link. Dune's code isn't public yet, so `event_code` is empty and the notifier looks it up on the Coimbatore movie list each run until the film is listed, then remembers it. Once you see Dune on BookMyShow, you can paste its `ET…` code in to skip the lookup.
 - `watches[].screens`: words like `EPIQ` or `IMAX`. The alert mentions which of them appear on the page. BookMyShow's page lists formats for the whole film, not per cinema, so **check the show yourself before booking**: the alert means "Broadway has shows for this film on this date", not "the EPIQ English show is confirmed".
 
 ## Actions minutes
 
-Each run takes under a minute and is billed as 1 minute. 16 runs a day is about **480 minutes a month**, inside the 2,000 free minutes a private repo gets on GitHub Free.
+GitHub bills each run in whole minutes, rounded up. 64 runs a day is about 1,920 minutes a month if every run finishes in under a minute; a run of 61 seconds bills 2. A **public** repo has unlimited free minutes. A private repo on GitHub Free gets 2,000 a month, which this schedule only just fits and a few slow runs would push past; if you keep the repo private and run short, set the cron in `.github/workflows/watch.yml` back to hourly. A service that fails is not asked again for the rest of the run, so a run waits at most a few minutes on failing services.
 
 ## Running the tests
 
