@@ -17,17 +17,17 @@ BookMyShow only serves Indian, non-datacenter IPs. A plain request from a GitHub
 
 | Secret | Service | Asks for an India IP with | Credits per request |
 |---|---|---|---|
-| `SCRAPERAPI_KEY` | [ScraperAPI](https://www.scraperapi.com/) | `country_code=in` | 1 |
+| `SCRAPERAPI_KEY` | [ScraperAPI](https://www.scraperapi.com/) | `country_code=in` | 10 (1 on a site without bot protection) |
 | `SCRAPEDO_TOKEN` | [Scrape.do](https://scrape.do/) | `geoCode=in` and `super=true` | 10 |
 | `SCRAPINGANT_KEY` | [ScrapingAnt](https://scrapingant.com/) | `proxy_country=IN` and `browser=false` | 1 |
 
 Every page the notifier fetches goes to the next service in turn (ScraperAPI, Scrape.do, ScrapingAnt, then ScraperAPI again, and so on). GitHub numbers its runs and the notifier uses that number to carry the turns on from run to run, so nothing has to be stored. If a service errors, is out of credits or returns a bot-check page, the page goes to the next service instead and the failed one is skipped for the rest of that run. `PROXY_URL` (any http(s) proxy in India, as `http://user:pass@host:port`) is tried last. A page that BookMyShow itself answers with 404 is reported as missing without asking another service.
 
-The run log says which service served each page and what it cost, for example `ScraperAPI ok in 6.2s, credits 1: /movies/...`. Keys are never printed.
+The run log says which service served each page and what it cost, for example `ScraperAPI ok in 1.6s, credits 10: /movies/...`. Keys are never printed.
 
 Check these against your plans. They come from each service's docs (27 Nov 2026):
 
-- **ScraperAPI** lists India (`in`) for the Business plan and above. Hobby and Startup get only US and EU, and the free plan is not listed, so on those plans ScraperAPI cannot give you an Indian IP; leave `SCRAPERAPI_KEY` unset to skip it. A site behind bot protection (Cloudflare, Akamai and similar) costs about 10 credits a request instead of 1; the cost in the log shows what a BookMyShow request really costs.
+- **ScraperAPI** lists India (`in`) for the Business plan and above. Hobby and Startup get only US and EU, and the free plan is not listed, so on those plans ScraperAPI cannot give you an Indian IP; leave `SCRAPERAPI_KEY` unset to skip it. A site behind bot protection (Cloudflare, Akamai and similar) costs about 10 credits a request instead of 1, and BookMyShow is one: the run log shows 10 credits for each page.
 - **Scrape.do** has India only in its residential country list, so the request needs `super=true`, which is 10 credits instead of 1. Its free plan has 1,000 credits a month, about 100 requests.
 - **ScrapingAnt** loads a full browser unless told not to (`browser` defaults to true, 10 credits), so the notifier sends `browser=false`. Its free plan has 10,000 credits a month and allows one request at a time.
 
@@ -35,7 +35,7 @@ Without any of these, every run fails, and after 6 failed runs in a row you get 
 
 ### How many credits this uses
 
-The notifier runs 64 times a day (every 15 minutes from 02:00 to 17:45 UTC) and makes 2 requests a run, one per film (for Dune, the film-list lookup until BookMyShow lists it). That is about **128 requests a day**, a third of them on each service, so about 43 each. A film that has opened is not checked again. At the prices above that is roughly 43 credits a day on ScraperAPI, 430 on Scrape.do and 43 on ScrapingAnt, so the free plans last about 23 days, 2 days and 7 months. When a service runs out, its turns go to the next one.
+The notifier runs 64 times a day (every 15 minutes from 02:00 to 17:45 UTC) and asks for one page per film and date that has not opened yet. With one date for each of the two films that is 2 pages a run, about **128 pages a day**, a third of them on each service, so about 43 each. A film date that has opened is not checked again. At the prices above (the run log showed 10 for ScraperAPI and 1 for ScrapingAnt) that is roughly 430 credits a day on ScraperAPI, 430 on Scrape.do and 43 on ScrapingAnt, so the free plans last about 2 days, 2 days and 7 months. Every extra date multiplies this: four dates for each film is 8 pages a run, about 512 pages a day. When a service runs out, its turns go to the next one.
 
 ## Set it up
 
@@ -82,7 +82,7 @@ Everything is in `config.json`:
 
 - `venue.code`: Broadway's BookMyShow venue code. Leave empty to match any cinema whose link contains `slug_hint` (`broadway`). Once you see Broadway on BookMyShow, its link looks like `/cinemas/coimbatore/<name>/buytickets/<CODE>/<date>`; put `<CODE>` here to be exact. The run log also prints it when Broadway opens.
 - `watches[].dates`: add more days like `20261222` (each extra date is one more BookMyShow request per run, so watch the credit budget).
-- `watches[].slug` and `watches[].event_code`: the film's part of the BookMyShow link, `/movies/<city>/<slug>/<event code>`. Avengers uses `ET00526287`, taken from another public setup, so check it against the real link. Dune's code isn't public yet, so `event_code` is empty and the notifier looks it up on the Coimbatore movie list each run until the film is listed, then remembers it. Once you see Dune on BookMyShow, you can paste its `ET…` code in to skip the lookup.
+- `watches[].slug` and `watches[].event_code`: the film's part of the BookMyShow link, `/movies/<city>/<slug>/<event code>`. **BookMyShow gives a premium format its own event**, so use the code of the format you want, not the film's main one. Avengers uses `ET00526287` (EPIQ) and Dune uses `ET00526290` (slug `dune-part-three-imax-2d`, the IMAX 2D event). Dune's plain English 2D event is `ET00491771`; Broadway had no shows under it when this was checked, so watching it never alerted. To find a format's code, open that format's showtimes page on BookMyShow and copy the `ET…` part of the address. Leave `event_code` empty only when the film's main event is the one you want: the notifier then looks it up on the Coimbatore movie list (`/explore/movies-coimbatore`) each run until the film is listed, picks the plain slug, and remembers it.
 - `watches[].screens`: words like `EPIQ` or `IMAX`. The alert mentions which of them appear on the page. BookMyShow's page lists formats for the whole film, not per cinema, so **check the show yourself before booking**: the alert means "Broadway has shows for this film on this date", not "the EPIQ English show is confirmed".
 
 ## Actions minutes

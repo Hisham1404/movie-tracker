@@ -26,6 +26,19 @@ FALLBACK_PAGE = (  # asked for the 21st, BookMyShow showed the 19th instead
     '<a href="/cinemas/coimbatore/broadway-cinemas-coimbatore/buytickets/BRDW/20261219">Broadway</a>'
     '</html>'
 )
+# The Flow tests run main() on this, not on the repo's config.json, so editing
+# the dates or event codes there cannot break them.
+FLOW_CONFIG = {
+    "city": "coimbatore",
+    "venue": {"label": "Broadway Cinemas, Coimbatore", "code": "", "slug_hint": "broadway"},
+    "alert_after_failed_runs": 6,
+    "watches": [
+        {"film": "Avengers: Doomsday", "language": "English", "screens": ["EPIQ"],
+         "dates": ["20261221"], "slug": "avengers-doomsday", "event_code": "ET00526287"},
+        {"film": "Dune: Part Three", "language": "English", "screens": ["IMAX"],
+         "dates": ["20261221"], "slug": "dune-part-three", "event_code": ""},
+    ],
+}
 
 
 class Detect(unittest.TestCase):
@@ -58,12 +71,22 @@ class Discover(unittest.TestCase):
         notifier.fetch = lambda url: "bookmyshow nothing here"
         self.assertIsNone(notifier.discover_event_code("coimbatore", "dune-part-three"))
 
+    def test_a_premium_format_is_its_own_event(self):
+        # As seen on BookMyShow: Dune's IMAX shows are a separate event, and
+        # looking up the film's own slug finds the plain one, not the IMAX one.
+        page = ('bookmyshow <a href="/movies/coimbatore/dune-part-three/ET00491771">x</a>'
+                '<a href="/movies/dune-part-three-imax-2d/ET00526290">y</a>')
+        notifier.fetch = lambda url: page
+        self.assertEqual(notifier.discover_event_code("coimbatore", "dune-part-three"), "ET00491771")
+        self.assertEqual(notifier.discover_event_code("coimbatore", "dune-part-three-imax-2d"), "ET00526290")
+
 
 class Flow(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         notifier.STATE_PATH = Path(self.tmp.name) / "state.json"
-        notifier.CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.json"
+        notifier.CONFIG_PATH = Path(self.tmp.name) / "config.json"
+        notifier.CONFIG_PATH.write_text(json.dumps(FLOW_CONFIG))
         self.alerts = []
         notifier.notify = lambda s, b: self.alerts.append(s) or ["test"]
         os.environ.pop("TEST_ALERT", None)
@@ -114,6 +137,23 @@ class Flow(unittest.TestCase):
         self.assertEqual(self.alerts, ["BookMyShow notifier cannot read BookMyShow"])
         self.run_with(notifier.FetchError("HTTP 403"))
         self.assertEqual(len(self.alerts), 1)  # warned once only
+
+
+class RealConfig(unittest.TestCase):
+    """Checks on the config.json that ships in the repo, never on its dates."""
+
+    def test_a_watch_with_screens_pins_that_screens_event(self):
+        # BookMyShow gives IMAX or EPIQ its own event, and the movie-list lookup
+        # only finds a film's plain one, which Broadway may not show at all.
+        # Without a pinned code, Dune's IMAX opening would go unseen.
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        for watch in cfg["watches"]:
+            if watch.get("enabled", True) and watch.get("screens"):
+                with self.subTest(watch["film"]):
+                    self.assertTrue(
+                        watch.get("event_code"),
+                        "set event_code to the ET... code of the screen's own event (see README)",
+                    )
 
 
 # --------------------------------------------------------------------------
