@@ -76,6 +76,16 @@ It works, but the free Twilio **sandbox** is a poor fit for a watch that runs fo
 
 A proper WhatsApp sender needs a Meta-verified WhatsApp Business profile and an approved message template. For this watch, **email plus Telegram is the reliable pair**.
 
+### Making the booking email stand out
+
+The booking alert goes out as an urgent email: the subject starts with `[URGENT]` and the message carries high-priority headers, which mail apps that support them (Outlook, for one) show as high importance. Gmail picks its own Important messages and may ignore those headers, so on Gmail set up a filter once:
+
+1. In Gmail, open the search box's options (the sliders icon), type `[URGENT] Booking open` in **Subject**, and choose **Create filter**.
+2. Tick **Never send it to Spam**, **Star it**, **Always mark it as important** and **Apply the label** (make a label such as `Booking`), then **Create filter**.
+3. On your phone, turn on notifications for that label in the Gmail app (on Android: Settings → your account → Manage labels → the label → Label notifications), or choose **High priority only** under Notifications if your app has it. Menu names vary a little between app versions.
+
+For an alert you can't miss, add Telegram as well: it pushes a notification straight to your phone. The test email and the "cannot read BookMyShow" warning are sent as normal mail.
+
 ## Changing what it watches
 
 Everything is in `config.json`:

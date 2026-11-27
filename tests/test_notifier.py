@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 import notifier  # noqa: E402
 
 REAL_FETCH = notifier.fetch  # several tests swap notifier.fetch for a fake; this is the real one
+REAL_NOTIFY = notifier.notify  # Flow swaps notifier.notify for a fake; this is the real one
 
 OPEN_PAGE = (
     '<html>bookmyshow IMAX EPIQ '
@@ -88,7 +89,14 @@ class Flow(unittest.TestCase):
         notifier.CONFIG_PATH = Path(self.tmp.name) / "config.json"
         notifier.CONFIG_PATH.write_text(json.dumps(FLOW_CONFIG))
         self.alerts = []
-        notifier.notify = lambda s, b: self.alerts.append(s) or ["test"]
+        self.urgent = []  # the urgent flag of each alert, in the same order
+
+        def fake_notify(subject, body, urgent=False):
+            self.alerts.append(subject)
+            self.urgent.append(urgent)
+            return ["test"]
+
+        notifier.notify = fake_notify
         os.environ.pop("TEST_ALERT", None)
 
     def tearDown(self):
@@ -108,6 +116,7 @@ class Flow(unittest.TestCase):
         self.run_with(OPEN_PAGE)
         self.assertEqual(len(self.alerts), 1)
         self.assertIn("Avengers: Doomsday", self.alerts[0])
+        self.assertEqual(self.urgent, [True])  # a booking alert is flagged urgent
         calls = []
         notifier.fetch = lambda url: calls.append(url) or OPEN_PAGE
         notifier.main()
@@ -135,8 +144,71 @@ class Flow(unittest.TestCase):
         self.assertEqual(self.alerts, [])
         self.run_with(notifier.FetchError("HTTP 403"))
         self.assertEqual(self.alerts, ["BookMyShow notifier cannot read BookMyShow"])
+        self.assertEqual(self.urgent, [False])  # the blind warning is not
         self.run_with(notifier.FetchError("HTTP 403"))
         self.assertEqual(len(self.alerts), 1)  # warned once only
+
+
+class Email(unittest.TestCase):
+    ENV = {"SMTP_USER": "me@example.com", "SMTP_APP_PASSWORD": "app-pass", "ALERT_EMAIL_TO": "me@example.com"}
+
+    def send(self, urgent):
+        """Run the real send_email against a fake mail server; return what it sent."""
+        sent = []
+
+        class FakeSMTP:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def login(self, user, password):
+                pass
+
+            def send_message(self, msg):
+                sent.append(msg)
+
+        with mock.patch.dict(os.environ, self.ENV), mock.patch.object(notifier.smtplib, "SMTP_SSL", FakeSMTP):
+            self.assertEqual(notifier.send_email("Booking open: A", "body", urgent), "email")
+        return sent[0]
+
+    def test_an_urgent_email_is_marked_high_priority(self):
+        msg = self.send(urgent=True)
+        self.assertEqual(msg["Subject"], "[URGENT] Booking open: A")
+        self.assertEqual(msg["X-Priority"], "1 (Highest)")
+        self.assertEqual(msg["X-MSMail-Priority"], "High")
+        self.assertEqual(msg["Importance"], "High")
+        self.assertEqual(msg["Priority"], "urgent")
+
+    def test_a_normal_email_is_left_alone(self):
+        msg = self.send(urgent=False)
+        self.assertEqual(msg["Subject"], "Booking open: A")
+        for header in ("X-Priority", "X-MSMail-Priority", "Importance", "Priority"):
+            self.assertIsNone(msg[header], header)
+
+    def test_notify_gives_the_flag_to_the_email_sender(self):
+        calls = []
+
+        def fake_email(subject, body, urgent=False):
+            calls.append(urgent)
+            return "email"
+
+        with mock.patch.object(notifier, "send_email", fake_email), contextlib.redirect_stdout(io.StringIO()):
+            REAL_NOTIFY("s", "b", urgent=True)
+            REAL_NOTIFY("s", "b")
+        self.assertEqual(calls, [True, False])
+
+    def test_every_sender_accepts_the_flag(self):
+        # Called directly, because notify() swallows a channel's errors. Nothing
+        # is set up here, so each sender takes the flag and sends nothing.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            for sender in (notifier.send_email, notifier.send_telegram, notifier.send_whatsapp):
+                with self.subTest(sender.__name__):
+                    self.assertIsNone(sender("s", "b", True))
 
 
 class RealConfig(unittest.TestCase):

@@ -5,7 +5,8 @@ BookMyShow booking watcher.
 For every watch in config.json it loads the film's BookMyShow "buytickets"
 page for each date and checks whether the chosen cinema has shows on that
 exact date. When a watch flips from closed to open it sends one alert by
-email, Telegram and/or WhatsApp (Twilio), whichever secrets are set.
+email, Telegram and/or WhatsApp (Twilio), whichever secrets are set. The
+email is flagged urgent (a [URGENT] subject and high-priority headers).
 
 State (what was already open, how many fetches failed in a row) is kept in
 state.json, which the workflow carries between runs with the Actions cache.
@@ -385,16 +386,24 @@ def check_watch(watch, city, venue, state):
 # Alerts
 # --------------------------------------------------------------------------
 
-def send_email(subject, body):
+def send_email(subject, body, urgent=False):
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_APP_PASSWORD")
     to = os.environ.get("ALERT_EMAIL_TO") or user
     if not (user and password and to):
         return None
     msg = EmailMessage()
-    msg["Subject"] = subject
+    msg["Subject"] = f"[URGENT] {subject}" if urgent else subject
     msg["From"] = user
     msg["To"] = to
+    if urgent:
+        # Mail apps that support message priority, such as Outlook, flag this
+        # as high importance. Gmail's own "Important" marker is Google's
+        # decision, so on Gmail also use a filter on the subject (see README).
+        msg["X-Priority"] = "1 (Highest)"
+        msg["X-MSMail-Priority"] = "High"
+        msg["Importance"] = "High"
+        msg["Priority"] = "urgent"
     msg.set_content(body)
     host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
     port = int(os.environ.get("SMTP_PORT", "465"))
@@ -404,7 +413,7 @@ def send_email(subject, body):
     return "email"
 
 
-def send_telegram(subject, body):
+def send_telegram(subject, body, urgent=False):  # urgent is for email only: Telegram always notifies
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     if not (token and chat):
@@ -418,7 +427,7 @@ def send_telegram(subject, body):
     return "telegram"
 
 
-def send_whatsapp(subject, body):
+def send_whatsapp(subject, body, urgent=False):  # urgent is for email only: WhatsApp always notifies
     sid = os.environ.get("TWILIO_ACCOUNT_SID")
     token = os.environ.get("TWILIO_AUTH_TOKEN")
     sender = os.environ.get("TWILIO_WHATSAPP_FROM")
@@ -435,11 +444,13 @@ def send_whatsapp(subject, body):
     return "whatsapp"
 
 
-def notify(subject, body):
+def notify(subject, body, urgent=False):
+    """Send on every channel whose secrets are set. urgent only changes the
+    email (high-priority headers and a [URGENT] subject marker)."""
     sent, failed = [], []
     for sender in (send_email, send_telegram, send_whatsapp):
         try:
-            channel = sender(subject, body)
+            channel = sender(subject, body, urgent)
             if channel:
                 sent.append(channel)
         except Exception as exc:  # one broken channel must not stop the others
@@ -508,7 +519,7 @@ def main():
                     f"Open the page and check the {watch.get('language', '')} "
                     f"{'/'.join(watch.get('screens', []))} show before booking:\n{info['url']}"
                 )
-                notify(f"Booking open: {name} on {pretty(date)}", body)
+                notify(f"Booking open: {name} on {pretty(date)}", body, urgent=True)
             state["open"][key] = bool(info)
 
     # Tell the owner once if BookMyShow keeps refusing us, so silence never
